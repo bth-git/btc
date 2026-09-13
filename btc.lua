@@ -1,15 +1,14 @@
 -- language: Lua, target: Roblox (Delta / Solara / Script-Ware / Wave)
--- BTC Admin Panel v1.5 — pure menu build, no textbox input, no chat dependency
--- GitHub-loadable via loadstring(game:HttpGet("..."))()
+-- BTC Admin Panel v1.6 — Delta-safe fixed build
+-- no seal/newcclosure, Heartbeat loops, GUI-parented ESP/chams, PlatformStand fly
+-- GitHub-loadable: loadstring(game:HttpGet("..."))()
 -- discord: https://discord.gg/57mYmMwRuH
 
 return (function()
 
 -- ============================================================
--- SILENT EXEC PRIMITIVES
+-- PRIMITIVES
 -- ============================================================
-
-local seal = (newcclosure and newcclosure) or function(f) return f end
 
 local function unhex(h)
     return (h:gsub("%x%x", function(c) return string.char(tonumber(c, 16)) end))
@@ -17,10 +16,6 @@ end
 
 local N = {
     PANEL   = unhex("4254435f50616e656c"),
-    MAIN    = unhex("4d61696e"),
-    TOP     = unhex("546f70426172"),
-    SIDEBAR = unhex("53696465626172"),
-    CONTENT = unhex("436f6e74656e74"),
     ESP_TAG = unhex("4254435f4553505f546167"),
     HL      = unhex("4254435f484c"),
     FLY_BV  = unhex("4254435f466c79"),
@@ -28,7 +23,7 @@ local N = {
 }
 
 local S = {
-    version = unhex("312e35"),
+    version = unhex("312e36"),
     flags   = {},
     conns   = {},
     tabs    = {},
@@ -45,9 +40,10 @@ local ref = setmetatable({ v = S }, {
     __index = function(t, k) return rawget(t, "v")[k] end,
 })
 
+-- no sealing — plain closure capture
 local function bind(fn)
     local r = ref
-    return seal(function(...) return fn(r, ...) end)
+    return function(...) return fn(r, ...) end
 end
 
 local function track(c, tag)
@@ -69,11 +65,11 @@ local HttpSvc    = game:GetService("HttpService")
 local CoreGui    = game:GetService("CoreGui")
 local Teleport   = game:GetService("TeleportService")
 local VUser      = game:GetService("VirtualUser")
+local Replicated = game:GetService("ReplicatedStorage")
 
 local LP    = Players.LocalPlayer
 local Mouse = LP:GetMouse()
 
--- cleanup previous
 pcall(function()
     local old = CoreGui:FindFirstChild(N.PANEL)
     if old then old:Destroy() end
@@ -93,7 +89,6 @@ if not ok or not GUI.Parent then
 end
 
 local Main = Instance.new("Frame")
-Main.Name = N.MAIN
 Main.Size = UDim2.new(0, 560, 0, 380)
 Main.Position = UDim2.new(0.5, -280, 0.5, -190)
 Main.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
@@ -102,12 +97,10 @@ Main.Active = true
 Main.Draggable = true
 Main.Parent = GUI
 Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 8)
-local ms = Instance.new("UIStroke", Main)
-ms.Color = Color3.fromRGB(60, 60, 70); ms.Thickness = 1
+local mstroke = Instance.new("UIStroke", Main)
+mstroke.Color = Color3.fromRGB(60, 60, 70); mstroke.Thickness = 1
 
--- top bar
 local Top = Instance.new("Frame")
-Top.Name = N.TOP
 Top.Size = UDim2.new(1, 0, 0, 34)
 Top.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
 Top.BorderSizePixel = 0
@@ -118,7 +111,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(0, 220, 1, 0)
 Title.Position = UDim2.new(0, 12, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = unhex("4254432020c2b7202076") .. S.version
+Title.Text = "BTC  ·  v" .. S.version
 Title.TextColor3 = Color3.fromRGB(120, 200, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 14
@@ -159,9 +152,7 @@ MinBtn.MouseButton1Click:Connect(function()
     Content.Visible = not Minimized
 end)
 
--- sidebar
 local Sidebar = Instance.new("Frame")
-Sidebar.Name = N.SIDEBAR
 Sidebar.Size = UDim2.new(0, 120, 1, -34)
 Sidebar.Position = UDim2.new(0, 0, 0, 34)
 Sidebar.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
@@ -177,9 +168,7 @@ SPad.PaddingTop = UDim.new(0, 8)
 SPad.PaddingLeft = UDim.new(0, 6)
 SPad.PaddingRight = UDim.new(0, 6)
 
--- content
 local Content = Instance.new("Frame")
-Content.Name = N.CONTENT
 Content.Size = UDim2.new(1, -126, 1, -44)
 Content.Position = UDim2.new(0, 122, 0, 38)
 Content.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
@@ -188,7 +177,7 @@ Content.Parent = Main
 Instance.new("UICorner", Content).CornerRadius = UDim.new(0, 8)
 
 -- ============================================================
--- TABS
+-- TAB SYSTEM
 -- ============================================================
 
 local function MakeTab(name)
@@ -288,7 +277,10 @@ local function MakeButton(parent, text, cb)
         Tween:Create(B, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(30, 30, 40) }):Play()
     end)
 
-    B.MouseButton1Click:Connect(seal(function() pcall(cb) end))
+    B.MouseButton1Click:Connect(function()
+        local ok, err = pcall(cb)
+        if not ok then warn("[BTC] button error: " .. tostring(err)) end
+    end)
     return B
 end
 
@@ -339,7 +331,8 @@ local function MakeToggle(parent, text, default, cb)
         Tween:Create(D, TweenInfo.new(0.15), {
             Position = State and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
         }):Play()
-        pcall(cb, State)
+        local ok, err = pcall(cb, State)
+        if not ok then warn("[BTC] toggle error: " .. tostring(err)) end
     end)
 
     return function() return State end
@@ -417,7 +410,6 @@ local function MakeSlider(parent, text, min, max, default, cb)
     return L
 end
 
--- button-only player picker (replaces textbox)
 local function MakePlayerPicker(parent, labelText, onPick)
     local Picker = Instance.new("TextButton")
     Picker.Size = UDim2.new(1, 0, 0, 28)
@@ -526,24 +518,39 @@ MakeToggle(PlayerTab, "Noclip", false, function(s) ref.flags.noclip = s end)
 
 MakeToggle(PlayerTab, "Fly", false, function(s)
     ref.flags.fly = s
+    local c = LP.Character
+    if not c then return end
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    local hum = c:FindFirstChildOfClass("Humanoid")
+    if not hrp then return end
     if s then
-        local c = LP.Character
-        if not c then return end
-        local hrp = c:FindFirstChild("HumanoidRootPart")
-        if not hrp then return end
-        local bv = Instance.new("BodyVelocity")
-        bv.Name = N.FLY_BV
-        bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-        bv.Velocity = Vector3.zero
-        bv.Parent = hrp
-        local gy = Instance.new("BodyGyro")
-        gy.Name = N.FLY_GY
-        gy.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-        gy.P = 1000
-        gy.Parent = hrp
+        if hum then hum.PlatformStand = true end
+        local bv = hrp:FindFirstChild(N.FLY_BV)
+        if not bv then
+            bv = Instance.new("BodyVelocity")
+            bv.Name = N.FLY_BV
+            bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+            bv.Velocity = Vector3.zero
+            bv.Parent = hrp
+        end
+        local gy = hrp:FindFirstChild(N.FLY_GY)
+        if not gy then
+            gy = Instance.new("BodyGyro")
+            gy.Name = N.FLY_GY
+            gy.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+            gy.P = 1000
+            gy.Parent = hrp
+        end
         local speed = 60
-        track(RunService.RenderStepped:Connect(bind(function(r)
+        track(RunService.Heartbeat:Connect(bind(function(r)
             if not r.flags.fly then return end
+            local char = LP.Character
+            if not char then return end
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if not root then return end
+            local b = root:FindFirstChild(N.FLY_BV)
+            local g = root:FindFirstChild(N.FLY_GY)
+            if not b or not g then return end
             local cam = Workspace.CurrentCamera
             local m = Vector3.zero
             if UIS:IsKeyDown(Enum.KeyCode.W) then m = m + cam.CFrame.LookVector end
@@ -552,17 +559,14 @@ MakeToggle(PlayerTab, "Fly", false, function(s)
             if UIS:IsKeyDown(Enum.KeyCode.D) then m = m + cam.CFrame.RightVector end
             if UIS:IsKeyDown(Enum.KeyCode.Space) then m = m + Vector3.new(0, 1, 0) end
             if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then m = m - Vector3.new(0, 1, 0) end
-            bv.Velocity = m.Magnitude > 0 and m.Unit * speed or Vector3.zero
-            gy.CFrame = cam.CFrame
+            b.Velocity = m.Magnitude > 0 and m.Unit * speed or Vector3.zero
+            g.CFrame = cam.CFrame
         end)), 3)
     else
-        local c = LP.Character
-        if c then
-            local hrp = c:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local a = hrp:FindFirstChild(N.FLY_BV); if a then a:Destroy() end
-                local b = hrp:FindFirstChild(N.FLY_GY); if b then b:Destroy() end
-            end
+        if hum then hum.PlatformStand = false end
+        if hrp then
+            local a = hrp:FindFirstChild(N.FLY_BV); if a then a:Destroy() end
+            local b = hrp:FindFirstChild(N.FLY_GY); if b then b:Destroy() end
         end
     end
 end)
@@ -584,52 +588,15 @@ MakeButton(PlayerTab, "Goto Target", function()
     end
 end)
 
-MakeButton(PlayerTab, "Set as Follow Target", function()
-    ref.flags.followTarget = ref.flags.target
-end)
-
-MakeToggle(PlayerTab, "Follow Target", false, function(s)
-    ref.flags.follow = s
-    if s then
-        track(RunService.Heartbeat:Connect(bind(function(r)
-            if not r.flags.follow or not r.flags.followTarget then return end
-                local tp = r.flags.followTarget.Character
-            local my = LP.Character
-            if tp and my then
-                local th = tp:FindFirstChild("HumanoidRootPart")
-                local mh = my:FindFirstChild("HumanoidRootPart")
-                if th and mh then
-                    mh.CFrame = mh.CFrame:Lerp(th.CFrame * CFrame.new(0, 0, 4), 0.4)
-                end
-            end
-        end)), 4)
-    end
-end)
-
--- ============================================================
--- TELEPORT TAB
--- ============================================================
-
-MakeSection(TeleportTab, "Player Teleport")
-MakePlayerPicker(TeleportTab, "TP target", function(p)
-    ref.flags.tpTarget = p
-end)
-MakeButton(TeleportTab, "Teleport To Selected", function()
-    local t = ref.flags.tpTarget
-    if t and t.Character and LP.Character then
-        LP.Character:MoveTo(t.Character.HumanoidRootPart.Position + Vector3.new(0, 3, 0))
-    end
-end)
-
 MakeSection(TeleportTab, "Click Teleport")
 MakeToggle(TeleportTab, "Click TP (Ctrl+Click)", false, function(s) ref.flags.clickTp = s end)
-Mouse.Button1Down:Connect(bind(function(r)
-    if r.flags.clickTp and UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
+Mouse.Button1Down:Connect(function()
+    if ref.flags.clickTp and UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
         if LP.Character then
             LP.Character:MoveTo(Mouse.Hit.Position + Vector3.new(0, 3, 0))
         end
     end
-end))
+end)
 
 MakeSection(TeleportTab, "Waypoints (preset buttons)")
 MakeButton(TeleportTab, "Save Slot 1", function()
@@ -657,22 +624,29 @@ end)
 
 MakeSection(CombatTab, "Aimbot (camera)")
 MakeToggle(CombatTab, "Aimbot Enabled", false, function(s) ref.flags.aimbot = s end)
-MakeToggle(CombatTab, "Team Check", true, function(s) ref.flags.aimTeam = s end)
-MakeSlider(CombatTab, "FOV", 10, 500, 100, function(v) ref.flags.aimFov = v end)
+MakeToggle(CombatTab, "Team Check", false, function(s) ref.flags.aimTeam = s end)
+MakeSlider(CombatTab, "FOV", 10, 500, 200, function(v) ref.flags.aimFov = v end)
+
+local function SameTeam(a, b)
+    local ta, tb = a.Team, b.Team
+    if ta == nil or tb == nil then return false end
+    return ta == tb
+end
 
 local function ClosestToCursor()
     local cam = Workspace.CurrentCamera
     local mp = UIS:GetMouseLocation()
     local best, bd = nil, math.huge
+    local fov = ref.flags.aimFov or 200
     for _, p in pairs(Players:GetPlayers()) do
         if p ~= LP and p.Character then
             local head = p.Character:FindFirstChild("Head")
             if head then
-                if ref.flags.aimTeam and p.Team == LP.Team then continue end
+                if ref.flags.aimTeam and SameTeam(p, LP) then continue end
                 local sp, on = cam:WorldToViewportPoint(head.Position)
                 if on then
                     local d = (Vector2.new(sp.X, sp.Y) - mp).Magnitude
-                    if d < bd and d <= (ref.flags.aimFov or 100) then
+                    if d < bd and d <= fov then
                         best, bd = p, d
                     end
                 end
@@ -682,7 +656,7 @@ local function ClosestToCursor()
     return best
 end
 
-track(RunService.RenderStepped:Connect(bind(function(r)
+track(RunService.Heartbeat:Connect(bind(function(r)
     if not r.flags.aimbot then return end
     local t = ClosestToCursor()
     if t and t.Character then
@@ -696,19 +670,20 @@ end)), 5)
 
 MakeSection(CombatTab, "Silent Aim")
 MakeToggle(CombatTab, "Enable Silent Aim", false, function(s) ref.silent.enabled = s end)
-MakeToggle(CombatTab, "Silent Team Check", true, function(s) ref.silent.teamCheck = s end)
+MakeToggle(CombatTab, "Silent Team Check", false, function(s) ref.silent.teamCheck = s end)
 MakeToggle(CombatTab, "Velocity Prediction", true, function(s) ref.silent.predict = s end)
-MakeSlider(CombatTab, "Silent FOV", 10, 500, 150, function(v) ref.silent.fov = v end)
+MakeSlider(CombatTab, "Silent FOV", 10, 500, 200, function(v) ref.silent.fov = v end)
 
-local AIM_PATTERNS = { "Fire", "Shoot", "Attack", "Hit", "Damage", "Swing", "Slash", "Click", "Spawn" }
+local AIM_PATTERNS = { "fire", "shoot", "attack", "hit", "damage", "swing", "slash", "click", "spawn", "remote" }
 
 local function DiscoverAimRemotes()
     local found = {}
     local function scan(root)
         for _, d in pairs(root:GetDescendants()) do
             if d:IsA("RemoteEvent") then
+                local ln = string.lower(d.Name)
                 for _, p in pairs(AIM_PATTERNS) do
-                    if string.find(string.lower(d.Name), string.lower(p)) then
+                    if string.find(ln, p) then
                         found[d] = true
                         break
                     end
@@ -716,8 +691,9 @@ local function DiscoverAimRemotes()
             end
         end
     end
-    scan(LP)
-    scan(game:GetService("ReplicatedStorage"))
+    pcall(scan, LP)
+    pcall(scan, Replicated)
+    pcall(scan, Workspace)
     return found
 end
 
@@ -739,7 +715,7 @@ local function SilentTarget()
     local best, bd = nil, math.huge
     for _, p in pairs(Players:GetPlayers()) do
         if p == LP or not p.Character then continue end
-        if ref.silent.teamCheck and p.Team == LP.Team then continue end
+        if ref.silent.teamCheck and SameTeam(p, LP) then continue end
         local head = p.Character:FindFirstChild("Head")
         if not head then continue end
         local sp, on = cam:WorldToViewportPoint(head.Position)
@@ -753,39 +729,44 @@ local function SilentTarget()
     return best
 end
 
-track(RunService.RenderStepped:Connect(bind(function(r)
+track(RunService.Heartbeat:Connect(bind(function(r)
     if not r.silent.enabled then r.silent.target = nil; return end
     r.silent.target = SilentTarget()
 end)), 6)
 
 do
-    local old
-    old = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        if ref.silent.enabled and ref.silent.remotes[self]
-           and (method == "FireServer" or method == "InvokeServer") then
-            local args = { ... }
-            local t = ref.silent.target
-            if t and t.Character then
-                local aim = PredictedHead(t)
-                if aim then
-                    for i, v in ipairs(args) do
-                        local ty = typeof(v)
-                        if ty == "CFrame" then
-                            args[i] = CFrame.new(v.Position, aim)
-                            break
-                        elseif ty == "Vector3" then
-                            args[i] = (aim - v).Unit
-                            break
+    local ok = pcall(function()
+        local old
+        old = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if ref.silent.enabled and ref.silent.remotes[self]
+               and (method == "FireServer" or method == "InvokeServer") then
+                local args = { ... }
+                local t = ref.silent.target
+                if t and t.Character then
+                    local aim = PredictedHead(t)
+                    if aim then
+                        for i, v in ipairs(args) do
+                            local ty = typeof(v)
+                            if ty == "CFrame" then
+                                args[i] = CFrame.new(v.Position, aim)
+                                break
+                            elseif ty == "Vector3" then
+                                args[i] = (aim - v).Unit
+                                break
+                            end
                         end
                     end
                 end
+                return old(self, table.unpack(args))
             end
-            return old(self, table.unpack(args))
-        end
-        return old(self, ...)
+            return old(self, ...)
+        end)
+        ref.silent.old = old
     end)
-    ref.silent.old = old
+    if not ok then
+        warn("[BTC] silent aim hook unavailable in this executor")
+    end
 end
 
 MakeButton(CombatTab, "Re-scan Aim Remotes", function()
@@ -810,72 +791,88 @@ track(RunService.Heartbeat:Connect(bind(function(r)
         end
     end
 end)), 7)
-
--- ============================================================
--- VISUAL TAB
+        -- ============================================================
+-- VISUAL TAB — ESP + chams parented to GUI (Adornee-driven)
 -- ============================================================
 
 MakeSection(VisualTab, "ESP")
 MakeToggle(VisualTab, "Player ESP", false, function(s) ref.flags.esp = s end)
 MakeToggle(VisualTab, "ESP Health", false, function(s) ref.flags.espHealth = s end)
 
-track(RunService.RenderStepped:Connect(bind(function(r)
+track(RunService.Heartbeat:Connect(bind(function(r)
     if not r.flags.esp then
         for _, p in pairs(Players:GetPlayers()) do
-            if p.Character and p.Character:FindFirstChild(N.ESP_TAG) then
-                p.Character[N.ESP_TAG]:Destroy()
-            end
+            local tag = r.espTags and r.espTags[p]
+            if tag then tag:Destroy(); r.espTags[p] = nil end
         end
         return
     end
+    r.espTags = r.espTags or {}
     local cam = Workspace.CurrentCamera
     for _, p in pairs(Players:GetPlayers()) do
-        if p == LP or not p.Character then continue end
+        if p == LP or not p.Character then
+            local old = r.espTags[p]
+            if old then old:Destroy(); r.espTags[p] = nil end
+            goto continue
+        end
+        local head = p.Character:FindFirstChild("Head")
         local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-        if not hrp then continue end
-        local tag = p.Character:FindFirstChild(N.ESP_TAG)
+        if not head or not hrp then
+            local old = r.espTags[p]
+            if old then old:Destroy(); r.espTags[p] = nil end
+            goto continue
+        end
+        local tag = r.espTags[p]
         if not tag then
             tag = Instance.new("BillboardGui")
             tag.Name = N.ESP_TAG
             tag.Size = UDim2.new(0, 120, 0, 20)
             tag.StudsOffset = Vector3.new(0, 2.5, 0)
             tag.AlwaysOnTop = true
-            tag.Parent = p.Character
+            tag.Parent = GUI
             local lbl = Instance.new("TextLabel")
             lbl.Name = "Lbl"
             lbl.Size = UDim2.new(1, 0, 1, 0)
             lbl.BackgroundTransparency = 1
-            lbl.TextColor3 = p.Team and p.Team.TeamColor.Color or Color3.fromRGB(255, 100, 100)
+            lbl.TextColor3 = Color3.fromRGB(255, 100, 100)
             lbl.TextStrokeTransparency = 0
             lbl.Font = Enum.Font.GothamBold
             lbl.TextSize = 13
             lbl.Parent = tag
+            r.espTags[p] = tag
         end
+        tag.Adornee = head
         local lbl = tag:FindFirstChild("Lbl")
         local hum = p.Character:FindFirstChildOfClass("Humanoid")
         if lbl and hum then
+            if p.Team then lbl.TextColor3 = p.Team.TeamColor.Color end
             local dist = math.floor((cam.CFrame.Position - hrp.Position).Magnitude)
             local hp = r.flags.espHealth and ("  " .. math.floor(hum.Health) .. "hp") or ""
             lbl.Text = p.Name .. "  [" .. dist .. "m]" .. hp
         end
+        ::continue::
     end
 end)), 8)
 
 MakeSection(VisualTab, "Chams")
 MakeToggle(VisualTab, "Chams (Highlight)", false, function(s) ref.flags.chams = s end)
 
-track(RunService.RenderStepped:Connect(bind(function(r)
+track(RunService.Heartbeat:Connect(bind(function(r)
     if not r.flags.chams then
         for _, p in pairs(Players:GetPlayers()) do
-            if p.Character and p.Character:FindFirstChild(N.HL) then
-                p.Character[N.HL]:Destroy()
-            end
+            local hl = r.chams and r.chams[p]
+            if hl then hl:Destroy(); r.chams[p] = nil end
         end
         return
     end
+    r.chams = r.chams or {}
     for _, p in pairs(Players:GetPlayers()) do
-        if p == LP or not p.Character then continue end
-        if not p.Character:FindFirstChild(N.HL) then
+        if p == LP or not p.Character then
+            local old = r.chams[p]
+            if old then old:Destroy(); r.chams[p] = nil end
+            goto continue
+        end
+        if not r.chams[p] then
             local hl = Instance.new("Highlight")
             hl.Name = N.HL
             hl.FillColor = p.Team and p.Team.TeamColor.Color or Color3.fromRGB(255, 60, 60)
@@ -883,8 +880,13 @@ track(RunService.RenderStepped:Connect(bind(function(r)
             hl.FillTransparency = 0.5
             hl.OutlineTransparency = 0
             hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            hl.Parent = p.Character
+            hl.Parent = GUI
+            hl.Adornee = p.Character
+            r.chams[p] = hl
+        else
+            r.chams[p].Adornee = p.Character
         end
+        ::continue::
     end
 end)), 9)
 
@@ -934,7 +936,7 @@ MakeToggle(WorldTab, "Freeze Time", false, function(s)
     if s then ref.saved.clock = Lighting.ClockTime end
 end)
 
-track(RunService.RenderStepped:Connect(bind(function(r)
+track(RunService.Heartbeat:Connect(bind(function(r)
     if r.flags.freezeTime then
         Lighting.ClockTime = r.saved.clock or 14
     end
@@ -957,7 +959,7 @@ MakeToggle(WorldTab, "Freecam (WASD)", false, function(s)
         local cam = Workspace.CurrentCamera
         ref.saved.freecamPos = cam.CFrame.Position
         local speed = 80
-        track(RunService.RenderStepped:Connect(bind(function(r)
+        track(RunService.Heartbeat:Connect(bind(function(r)
             if not r.flags.freecam then return end
             local cam = Workspace.CurrentCamera
             local look = cam.CFrame.LookVector
@@ -1109,7 +1111,7 @@ MakeButton(MiscTab, "Destroy Panel", function() GUI:Destroy() end)
 -- BACKGROUND LOOPS
 -- ============================================================
 
-track(RunService.Stepped:Connect(bind(function(r)
+track(RunService.Heartbeat:Connect(bind(function(r)
     if r.flags.noclip and LP.Character then
         for _, v in pairs(LP.Character:GetDescendants()) do
             if v:IsA("BasePart") and v.CanCollide then v.CanCollide = false end
@@ -1117,12 +1119,12 @@ track(RunService.Stepped:Connect(bind(function(r)
     end
 end)), 20)
 
-UIS.JumpRequest:Connect(bind(function(r)
-    if r.flags.infJump and LP.Character then
+UIS.JumpRequest:Connect(function()
+    if ref.flags.infJump and LP.Character then
         local h = LP.Character:FindFirstChildOfClass("Humanoid")
         if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
     end
-end))
+end)
 
 S.tabs["Player"].Btn.BackgroundColor3 = Color3.fromRGB(45, 45, 58)
 S.tabs["Player"].Btn.TextColor3 = Color3.fromRGB(120, 200, 255)
@@ -1136,6 +1138,7 @@ LP.CharacterAdded:Connect(function(char)
         if ref.flags.jump then h.JumpPower = ref.flags.jump; h.UseJumpPower = true end
     end
 end)
+
 local notif = Instance.new("TextLabel")
 notif.Size = UDim2.new(0, 220, 0, 30)
 notif.Position = UDim2.new(0.5, -110, 0, 12)
