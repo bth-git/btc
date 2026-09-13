@@ -1,5 +1,5 @@
--- language: Lua, target: Roblox (Delta / Solara / Script-Ware / Wave)
--- BTC Admin Panel v1.7 — Lua 5.1-safe, no goto, no seal, Heartbeat-only
+-- language: Lua, target: Roblox (Delta / Solara / Script-Ware / Wave) — PC + mobile
+-- BTC Admin Panel v1.8 — kill module, remote scanner, mobile-tuned, Discord card
 -- GitHub-loadable: loadstring(game:HttpGet("..."))()
 -- discord: https://discord.gg/57mYmMwRuH
 
@@ -18,13 +18,22 @@ local N = {
 }
 
 local S = {
-    version = unhex("312e37"),
+    version = unhex("312e38"),
     flags   = {},
     conns   = {},
     tabs    = {},
     silent  = {
         enabled = false, remotes = {}, teamCheck = false,
         fov = 200, predict = true, target = nil, old = nil,
+    },
+    kill    = {
+        remote      = nil,
+        argKind     = "Player",   -- Player | Character | HumanoidRootPart | Head
+        loop        = false,
+        rate        = 10,
+        jitter      = true,
+        target      = nil,
+        candidates  = {},
     },
     clean   = { hide = true },
     saved   = {},
@@ -61,6 +70,18 @@ local GuiService = game:GetService("GuiService")
 local LP    = Players.LocalPlayer
 local Mouse = LP:GetMouse()
 
+-- mobile detection
+local IS_MOBILE = UIS.TouchEnabled and not UIS.KeyboardEnabled
+
+-- mobile-tuned sizing
+local SCALE   = IS_MOBILE and 0.85 or 1
+local PANEL_W = math.floor(560 * (IS_MOBILE and 1.05 or 1))
+local PANEL_H = math.floor(380 * (IS_MOBILE and 1.15 or 1))
+local BTN_H   = IS_MOBILE and 34 or 28
+local TXT_S   = IS_MOBILE and 13 or 12
+local SEC_S   = IS_MOBILE and 12 or 11
+local TAB_W   = IS_MOBILE and 110 or 120
+
 pcall(function()
     local old = CoreGui:FindFirstChild(N.PANEL)
     if old then old:Destroy() end
@@ -76,16 +97,53 @@ if not ok or not GUI.Parent then
 end
 
 local Main = Instance.new("Frame")
-Main.Size = UDim2.new(0, 560, 0, 380)
-Main.Position = UDim2.new(0.5, -280, 0.5, -190)
+Main.Size = UDim2.new(0, PANEL_W, 0, PANEL_H)
+Main.Position = UDim2.new(0.5, -PANEL_W/2, 0.5, -PANEL_H/2)
 Main.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 Main.BorderSizePixel = 0
 Main.Active = true
-Main.Draggable = true
 Main.Parent = GUI
 Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 8)
 local mstroke = Instance.new("UIStroke", Main)
 mstroke.Color = Color3.fromRGB(60, 60, 70); mstroke.Thickness = 1
+
+-- custom drag (works on mobile + PC)
+do
+    local dragging, dragStart, startPos = false, nil, nil
+    local function beginDrag(input)
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+    end
+    local function moveDrag(input)
+        if not dragging then return end
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+    local function endDrag() dragging = false end
+
+    Main.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            beginDrag(input)
+        end
+    end)
+    UIS.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+           or input.UserInputType == Enum.UserInputType.Touch then
+            moveDrag(input)
+        end
+    end)
+    UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            endDrag()
+        end
+    end)
+end
 
 local Top = Instance.new("Frame")
 Top.Size = UDim2.new(1, 0, 0, 34)
@@ -106,8 +164,8 @@ Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = Top
 
 local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 28, 0, 28)
-CloseBtn.Position = UDim2.new(1, -34, 0, 3)
+CloseBtn.Size = UDim2.new(0, 32, 0, 28)
+CloseBtn.Position = UDim2.new(1, -38, 0, 3)
 CloseBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
 CloseBtn.Text = "x"
 CloseBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
@@ -118,8 +176,8 @@ CloseBtn.Parent = Top
 Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
 
 local MinBtn = Instance.new("TextButton")
-MinBtn.Size = UDim2.new(0, 28, 0, 28)
-MinBtn.Position = UDim2.new(1, -66, 0, 3)
+MinBtn.Size = UDim2.new(0, 32, 0, 28)
+MinBtn.Position = UDim2.new(1, -74, 0, 3)
 MinBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
 MinBtn.Text = "-"
 MinBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
@@ -132,7 +190,7 @@ Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
 CloseBtn.MouseButton1Click:Connect(function() GUI:Destroy() end)
 
 local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 120, 1, -34)
+Sidebar.Size = UDim2.new(0, TAB_W, 1, -34)
 Sidebar.Position = UDim2.new(0, 0, 0, 34)
 Sidebar.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
 Sidebar.BorderSizePixel = 0
@@ -148,8 +206,8 @@ SPad.PaddingLeft = UDim.new(0, 6)
 SPad.PaddingRight = UDim.new(0, 6)
 
 local Content = Instance.new("Frame")
-Content.Size = UDim2.new(1, -126, 1, -44)
-Content.Position = UDim2.new(0, 122, 0, 38)
+Content.Size = UDim2.new(1, -(TAB_W + 6), 1, -44)
+Content.Position = UDim2.new(0, TAB_W + 2, 0, 38)
 Content.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 Content.BorderSizePixel = 0
 Content.Parent = Main
@@ -158,19 +216,19 @@ Instance.new("UICorner", Content).CornerRadius = UDim.new(0, 8)
 local Minimized = false
 MinBtn.MouseButton1Click:Connect(function()
     Minimized = not Minimized
-    Main.Size = Minimized and UDim2.new(0, 560, 0, 34) or UDim2.new(0, 560, 0, 380)
+    Main.Size = Minimized and UDim2.new(0, PANEL_W, 0, 34) or UDim2.new(0, PANEL_W, 0, PANEL_H)
     Sidebar.Visible = not Minimized
     Content.Visible = not Minimized
 end)
 
 local function MakeTab(name)
     local Btn = Instance.new("TextButton")
-    Btn.Size = UDim2.new(1, 0, 0, 30)
+    Btn.Size = UDim2.new(1, 0, 0, BTN_H + 2)
     Btn.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
     Btn.Text = "  " .. name
     Btn.TextColor3 = Color3.fromRGB(190, 190, 200)
     Btn.Font = Enum.Font.GothamMedium
-    Btn.TextSize = 12
+    Btn.TextSize = TXT_S
     Btn.TextXAlignment = Enum.TextXAlignment.Left
     Btn.BorderSizePixel = 0
     Btn.Parent = Sidebar
@@ -218,7 +276,7 @@ local function MakeLabel(parent, text)
     L.Text = text
     L.TextColor3 = Color3.fromRGB(150, 150, 165)
     L.Font = Enum.Font.GothamMedium
-    L.TextSize = 11
+    L.TextSize = SEC_S
     L.TextXAlignment = Enum.TextXAlignment.Left
     L.Parent = parent
     return L
@@ -231,7 +289,7 @@ local function MakeSection(parent, text)
     L.Text = string.upper(text)
     L.TextColor3 = Color3.fromRGB(120, 200, 255)
     L.Font = Enum.Font.GothamBold
-    L.TextSize = 11
+    L.TextSize = SEC_S
     L.TextXAlignment = Enum.TextXAlignment.Left
     L.Parent = parent
     return L
@@ -239,12 +297,12 @@ end
 
 local function MakeButton(parent, text, cb)
     local B = Instance.new("TextButton")
-    B.Size = UDim2.new(1, 0, 0, 28)
+    B.Size = UDim2.new(1, 0, 0, BTN_H)
     B.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
     B.Text = text
     B.TextColor3 = Color3.fromRGB(210, 210, 220)
     B.Font = Enum.Font.GothamMedium
-    B.TextSize = 12
+    B.TextSize = TXT_S
     B.BorderSizePixel = 0
     B.Parent = parent
     Instance.new("UICorner", B).CornerRadius = UDim.new(0, 6)
@@ -265,7 +323,7 @@ end
 
 local function MakeToggle(parent, text, default, cb)
     local Holder = Instance.new("Frame")
-    Holder.Size = UDim2.new(1, 0, 0, 28)
+    Holder.Size = UDim2.new(1, 0, 0, BTN_H)
     Holder.BackgroundTransparency = 1
     Holder.Parent = parent
 
@@ -275,21 +333,21 @@ local function MakeToggle(parent, text, default, cb)
     L.Text = text
     L.TextColor3 = Color3.fromRGB(210, 210, 220)
     L.Font = Enum.Font.GothamMedium
-    L.TextSize = 12
+    L.TextSize = TXT_S
     L.TextXAlignment = Enum.TextXAlignment.Left
     L.Parent = Holder
 
     local T = Instance.new("Frame")
-    T.Size = UDim2.new(0, 40, 0, 20)
-    T.Position = UDim2.new(1, -40, 0.5, -10)
+    T.Size = UDim2.new(0, 44, 0, 22)
+    T.Position = UDim2.new(1, -44, 0.5, -11)
     T.BackgroundColor3 = default and Color3.fromRGB(60, 140, 240) or Color3.fromRGB(50, 50, 60)
     T.BorderSizePixel = 0
     T.Parent = Holder
     Instance.new("UICorner", T).CornerRadius = UDim.new(1, 0)
 
     local D = Instance.new("Frame")
-    D.Size = UDim2.new(0, 16, 0, 16)
-    D.Position = default and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+    D.Size = UDim2.new(0, 18, 0, 18)
+    D.Position = default and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
     D.BackgroundColor3 = Color3.fromRGB(240, 240, 245)
     D.BorderSizePixel = 0
     D.Parent = T
@@ -308,7 +366,7 @@ local function MakeToggle(parent, text, default, cb)
             BackgroundColor3 = State and Color3.fromRGB(60, 140, 240) or Color3.fromRGB(50, 50, 60)
         }):Play()
         Tween:Create(D, TweenInfo.new(0.15), {
-            Position = State and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+            Position = State and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
         }):Play()
         local ok, err = pcall(cb, State)
         if not ok then warn("[BTC] toggle error: " .. tostring(err)) end
@@ -329,23 +387,23 @@ end)
 
 local function MakeSlider(parent, text, min, max, default, cb)
     local H = Instance.new("Frame")
-    H.Size = UDim2.new(1, 0, 0, 38)
+    H.Size = UDim2.new(1, 0, 0, 44)
     H.BackgroundTransparency = 1
     H.Parent = parent
 
     local L = Instance.new("TextLabel")
-    L.Size = UDim2.new(1, 0, 0, 16)
+    L.Size = UDim2.new(1, 0, 0, 18)
     L.BackgroundTransparency = 1
     L.Text = text .. ": " .. tostring(default)
     L.TextColor3 = Color3.fromRGB(210, 210, 220)
     L.Font = Enum.Font.GothamMedium
-    L.TextSize = 12
+    L.TextSize = TXT_S
     L.TextXAlignment = Enum.TextXAlignment.Left
     L.Parent = H
 
     local Bar = Instance.new("Frame")
-    Bar.Size = UDim2.new(1, 0, 0, 6)
-    Bar.Position = UDim2.new(0, 0, 0, 24)
+    Bar.Size = UDim2.new(1, 0, 0, 10)
+    Bar.Position = UDim2.new(0, 0, 0, 26)
     Bar.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
     Bar.BorderSizePixel = 0
     Bar.Parent = H
@@ -359,8 +417,8 @@ local function MakeSlider(parent, text, min, max, default, cb)
     Instance.new("UICorner", Fill).CornerRadius = UDim.new(1, 0)
 
     local Knob = Instance.new("Frame")
-    Knob.Size = UDim2.new(0, 12, 0, 12)
-    Knob.Position = UDim2.new((default - min) / (max - min), -6, 0.5, -6)
+    Knob.Size = UDim2.new(0, 18, 0, 18)
+    Knob.Position = UDim2.new((default - min) / (max - min), -9, 0.5, -9)
     Knob.BackgroundColor3 = Color3.fromRGB(240, 240, 245)
     Knob.BorderSizePixel = 0
     Knob.Parent = Bar
@@ -370,7 +428,7 @@ local function MakeSlider(parent, text, min, max, default, cb)
         local rel = math.clamp((input.Position.X - Bar.AbsolutePosition.X) / Bar.AbsoluteSize.X, 0, 1)
         local v = math.floor(min + (max - min) * rel)
         Fill.Size = UDim2.new(rel, 0, 1, 0)
-        Knob.Position = UDim2.new(rel, -6, 0.5, -6)
+        Knob.Position = UDim2.new(rel, -9, 0.5, -9)
         L.Text = text .. ": " .. tostring(v)
         pcall(cb, v)
     end
@@ -381,9 +439,28 @@ local function MakeSlider(parent, text, min, max, default, cb)
     B.Text = ""
     B.Parent = Bar
 
+    local touchDragging = false
+
     B.MouseButton1Down:Connect(function()
         ActiveDrag = Update
         Update({ Position = UIS:GetMouseLocation() })
+    end)
+
+    Bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            touchDragging = true
+            Update(input)
+        end
+    end)
+    UIS.InputChanged:Connect(function(input)
+        if touchDragging and input.UserInputType == Enum.UserInputType.Touch then
+            Update(input)
+        end
+    end)
+    UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            touchDragging = false
+        end
     end)
 
     return L
@@ -391,12 +468,12 @@ end
 
 local function MakePlayerPicker(parent, labelText, onPick)
     local Picker = Instance.new("TextButton")
-    Picker.Size = UDim2.new(1, 0, 0, 28)
+    Picker.Size = UDim2.new(1, 0, 0, BTN_H)
     Picker.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
     Picker.Text = labelText .. ": none"
     Picker.TextColor3 = Color3.fromRGB(220, 220, 230)
     Picker.Font = Enum.Font.GothamMedium
-    Picker.TextSize = 12
+    Picker.TextSize = TXT_S
     Picker.BorderSizePixel = 0
     Picker.Parent = parent
     Instance.new("UICorner", Picker).CornerRadius = UDim.new(0, 6)
@@ -423,12 +500,12 @@ local function MakePlayerPicker(parent, labelText, onPick)
             if p ~= LP then
                 n = n + 1
                 local row = Instance.new("TextButton")
-                row.Size = UDim2.new(1, 0, 0, 26)
+                row.Size = UDim2.new(1, 0, 0, BTN_H - 2)
                 row.BackgroundColor3 = Color3.fromRGB(26, 26, 34)
                 row.Text = p.Name
                 row.TextColor3 = Color3.fromRGB(200, 200, 210)
                 row.Font = Enum.Font.GothamMedium
-                row.TextSize = 12
+                row.TextSize = TXT_S
                 row.BorderSizePixel = 0
                 row.Parent = ListHolder
                 Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
@@ -441,7 +518,7 @@ local function MakePlayerPicker(parent, labelText, onPick)
                 end)
             end
         end
-        ListHolder.Size = UDim2.new(1, 0, 0, n * 30)
+        ListHolder.Size = UDim2.new(1, 0, 0, n * (BTN_H + 2))
     end
 
     Picker.MouseButton1Click:Connect(function()
@@ -460,13 +537,113 @@ local function MakePlayerPicker(parent, labelText, onPick)
     return Picker
 end
 
+-- Discord card — prominent, attractive
+local function MakeDiscordCard(parent)
+    local Card = Instance.new("Frame")
+    Card.Size = UDim2.new(1, 0, 0, 76)
+    Card.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+    Card.BorderSizePixel = 0
+    Card.Parent = parent
+    Instance.new("UICorner", Card).CornerRadius = UDim.new(0, 10)
+
+    local glow = Instance.new("UIStroke", Card)
+    glow.Color = Color3.fromRGB(120, 140, 255)
+    glow.Thickness = 1.5
+    glow.Transparency = 0.2
+
+    -- slow pulse
+    task.spawn(function()
+        while Card.Parent do
+            Tween:Create(glow, TweenInfo.new(1.2, Enum.EasingStyle.Sine), { Transparency = 0.6 }):Play()
+            task.wait(1.2)
+            Tween:Create(glow, TweenInfo.new(1.2, Enum.EasingStyle.Sine), { Transparency = 0.1 }):Play()
+            task.wait(1.2)
+        end
+    end)
+
+    local Logo = Instance.new("TextLabel")
+    Logo.Size = UDim2.new(0, 56, 1, 0)
+    Logo.Position = UDim2.new(0, 8, 0, 0)
+    Logo.BackgroundTransparency = 1
+    Logo.Text = "◈"
+    Logo.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Logo.Font = Enum.Font.GothamBold
+    Logo.TextSize = 34
+    Logo.Parent = Card
+
+    local Head = Instance.new("TextLabel")
+    Head.Size = UDim2.new(1, -140, 0, 26)
+    Head.Position = UDim2.new(0, 64, 0, 12)
+    Head.BackgroundTransparency = 1
+    Head.Text = "JOIN BTC COMMUNITY"
+    Head.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Head.Font = Enum.Font.GothamBold
+    Head.TextSize = 14
+    Head.TextXAlignment = Enum.TextXAlignment.Left
+    Head.Parent = Card
+
+    local Sub = Instance.new("TextLabel")
+    Sub.Size = UDim2.new(1, -140, 0, 18)
+    Sub.Position = UDim2.new(0, 64, 0, 36)
+    Sub.BackgroundTransparency = 1
+    Sub.Text = "discord.gg/57mYmMwRuH"
+    Sub.TextColor3 = Color3.fromRGB(225, 230, 255)
+    Sub.Font = Enum.Font.GothamMedium
+    Sub.TextSize = 11
+    Sub.TextXAlignment = Enum.TextXAlignment.Left
+    Sub.Parent = Card
+
+    local Join = Instance.new("TextButton")
+    Join.Size = UDim2.new(0, 100, 0, 34)
+    Join.Position = UDim2.new(1, -110, 0.5, -17)
+    Join.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    Join.Text = "JOIN"
+    Join.TextColor3 = Color3.fromRGB(88, 101, 242)
+    Join.Font = Enum.Font.GothamBold
+    Join.TextSize = 13
+    Join.BorderSizePixel = 0
+    Join.Parent = Card
+    Instance.new("UICorner", Join).CornerRadius = UDim.new(0, 8)
+
+    Join.MouseEnter:Connect(function()
+        Tween:Create(Join, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(240, 240, 255) }):Play()
+    end)
+    Join.MouseLeave:Connect(function()
+        Tween:Create(Join, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(255, 255, 255) }):Play()
+    end)
+
+    Join.MouseButton1Click:Connect(function()
+        if setclipboard then setclipboard(ref.discord) end
+        pcall(function()
+            GuiService:OpenBrowserWindow(ref.discord)
+        end)
+        Join.Text = "COPIED"
+        task.delay(1.5, function()
+            if Join.Parent then Join.Text = "JOIN" end
+        end)
+    end)
+
+    local copy = Instance.new("TextButton")
+    copy.Size = UDim2.new(0, 0, 0, 0)
+    copy.BackgroundTransparency = 1
+    copy.Text = ""
+    copy.Parent = Card
+
+    return Card
+end
+
 local PlayerTab   = MakeTab("Player")
 local TeleportTab = MakeTab("Teleport")
 local CombatTab   = MakeTab("Combat")
+local KillTab     = MakeTab("Kill")
 local VisualTab   = MakeTab("Visual")
 local WorldTab    = MakeTab("World")
 local ServerTab   = MakeTab("Server")
 local MiscTab     = MakeTab("Misc")
+
+-- ============================================================
+-- PLAYER
+-- ============================================================
 
 MakeSection(PlayerTab, "Character")
 
@@ -536,12 +713,23 @@ MakeToggle(PlayerTab, "Fly", false, function(s)
             if not b or not g then return end
             local cam = Workspace.CurrentCamera
             local m = Vector3.zero
+            -- keyboard
             if UIS:IsKeyDown(Enum.KeyCode.W) then m = m + cam.CFrame.LookVector end
             if UIS:IsKeyDown(Enum.KeyCode.S) then m = m - cam.CFrame.LookVector end
             if UIS:IsKeyDown(Enum.KeyCode.A) then m = m - cam.CFrame.RightVector end
             if UIS:IsKeyDown(Enum.KeyCode.D) then m = m + cam.CFrame.RightVector end
             if UIS:IsKeyDown(Enum.KeyCode.Space) then m = m + Vector3.new(0, 1, 0) end
             if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then m = m - Vector3.new(0, 1, 0) end
+            -- mobile: on-screen joystick is not accessible; use camera look + touch joystick via Humanoid
+            if IS_MOBILE and r.flags.fly then
+                local hum2 = char:FindFirstChildOfClass("Humanoid")
+                if hum2 then
+                    local dir = hum2.MoveDirection
+                    if dir.Magnitude > 0.05 then
+                        m = m + cam.CFrame.LookVector * dir.Z + cam.CFrame.RightVector * dir.X
+                    end
+                end
+            end
             b.Velocity = m.Magnitude > 0 and m.Unit * speed or Vector3.zero
             g.CFrame = cam.CFrame
         end)), 3)
@@ -554,10 +742,10 @@ MakeToggle(PlayerTab, "Fly", false, function(s)
     end
 end)
 
-MakeSection(PlayerTab, "Target (menu)")
+MakeSection(PlayerTab, "Target")
 MakePlayerPicker(PlayerTab, "Target", function(p) ref.flags.target = p end)
 
-MakeButton(PlayerTab, "Spectate Target", function()
+MakeButton(PlayerTab, "Spectate", function()
     local t = ref.flags.target
     if t and t.Character then
         Workspace.CurrentCamera.CameraSubject = t.Character:FindFirstChildOfClass("Humanoid")
@@ -567,52 +755,22 @@ end)
 MakeButton(PlayerTab, "Goto Target", function()
     local t = ref.flags.target
     if t and t.Character and LP.Character then
-        local tHrp = t.Character:FindFirstChild("HumanoidRootPart")
-        if tHrp then
-            LP.Character:MoveTo(tHrp.Position + Vector3.new(0, 3, 0))
-        end
+        local th = t.Character:FindFirstChild("HumanoidRootPart")
+        if th then LP.Character:MoveTo(th.Position + Vector3.new(0, 3, 0)) end
     end
 end)
 
-MakeButton(PlayerTab, "Set as Follow Target", function()
-    ref.flags.followTarget = ref.flags.target
-end)
-
-MakeToggle(PlayerTab, "Follow Target", false, function(s)
-    ref.flags.follow = s
-    track(RunService.Heartbeat:Connect(bind(function(r)
-        if not r.flags.follow or not r.flags.followTarget then return end
-        local tp = r.flags.followTarget.Character
-        local my = LP.Character
-        if tp and my then
-            local th = tp:FindFirstChild("HumanoidRootPart")
-            local mh = my:FindFirstChild("HumanoidRootPart")
-            if th and mh then
-                mh.CFrame = mh.CFrame:Lerp(th.CFrame * CFrame.new(0, 0, 4), 0.4)
-            end
-        end
-    end)), 4)
-end)
+-- ============================================================
+-- TELEPORT
+-- ============================================================
 
 MakeSection(TeleportTab, "Player Teleport")
 MakePlayerPicker(TeleportTab, "TP target", function(p) ref.flags.tpTarget = p end)
 MakeButton(TeleportTab, "Teleport To Selected", function()
     local t = ref.flags.tpTarget
     if t and t.Character and LP.Character then
-        local tHrp = t.Character:FindFirstChild("HumanoidRootPart")
-        if tHrp then
-            LP.Character:MoveTo(tHrp.Position + Vector3.new(0, 3, 0))
-        end
-    end
-end)
-
-MakeSection(TeleportTab, "Click Teleport")
-MakeToggle(TeleportTab, "Click TP (Ctrl+Click)", false, function(s) ref.flags.clickTp = s end)
-Mouse.Button1Down:Connect(function()
-    if ref.flags.clickTp and UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
-        if LP.Character then
-            LP.Character:MoveTo(Mouse.Hit.Position + Vector3.new(0, 3, 0))
-        end
+        local th = t.Character:FindFirstChild("HumanoidRootPart")
+        if th then LP.Character:MoveTo(th.Position + Vector3.new(0, 3, 0)) end
     end
 end)
 
@@ -629,12 +787,149 @@ end)
 MakeButton(TeleportTab, "Load Slot 2", function()
     if ref.flags.wp2 and LP.Character then LP.Character.HumanoidRootPart.CFrame = ref.flags.wp2 end
 end)
-MakeButton(TeleportTab, "Save Slot 3", function()
-    if LP.Character then ref.flags.wp3 = LP.Character.HumanoidRootPart.CFrame end
+
+-- ============================================================
+-- KILL TAB
+-- ============================================================
+
+MakeSection(KillTab, "Target")
+MakePlayerPicker(KillTab, "Kill target", function(p)
+    ref.kill.target = p
 end)
-MakeButton(TeleportTab, "Load Slot 3", function()
-    if ref.flags.wp3 and LP.Character then LP.Character.HumanoidRootPart.CFrame = ref.flags.wp3 end
+
+MakeSection(KillTab, "Kill Remote Scanner")
+MakeButton(KillTab, "Scan For Kill Remotes", function()
+    local found = {}
+    local patterns = { "kill", "damage", "hit", "attack", "take", "hurt", "die", "slay", "elim" }
+    local function scan(root)
+        if not root then return end
+        for _, d in pairs(root:GetDescendants()) do
+            if d:IsA("RemoteEvent") then
+                local ln = string.lower(d.Name)
+                for _, p in pairs(patterns) do
+                    if string.find(ln, p, 1, true) then
+                        found[#found+1] = d
+                        break
+                    end
+                end
+            end
+        end
+    end
+    pcall(scan, Replicated)
+    pcall(scan, Workspace)
+    pcall(scan, LP)
+    if LP.Character then pcall(scan, LP.Character) end
+    ref.kill.candidates = found
+    warn("[BTC] kill remotes found: " .. #found)
+    for i, r in ipairs(found) do
+        warn("  [" .. i .. "] " .. r:GetFullName())
+    end
 end)
+
+MakeLabel(KillTab, "Use the button above, then check console")
+
+MakeSection(KillTab, "Selected Remote")
+local RemoteLabel = MakeLabel(KillTab, "remote: none")
+
+MakeButton(KillTab, "Use First Found", function()
+    if ref.kill.candidates[1] then
+        ref.kill.remote = ref.kill.candidates[1]
+        RemoteLabel.Text = "remote: " .. ref.kill.remote.Name
+    end
+end)
+
+MakeButton(KillTab, "Cycle Remote", function()
+    if #ref.kill.candidates == 0 then return end
+    local cur = ref.kill.remote
+    local idx = 1
+    for i, r in ipairs(ref.kill.candidates) do
+        if r == cur then idx = i + 1 break end
+    end
+    if idx > #ref.kill.candidates then idx = 1 end
+    ref.kill.remote = ref.kill.candidates[idx]
+    RemoteLabel.Text = "remote: " .. ref.kill.remote.Name
+end)
+
+MakeSection(KillTab, "Argument Shape")
+MakeButton(KillTab, "Arg: Player", function()
+    ref.kill.argKind = "Player"
+end)
+MakeButton(KillTab, "Arg: Character", function()
+    ref.kill.argKind = "Character"
+end)
+MakeButton(KillTab, "Arg: HumanoidRootPart", function()
+    ref.kill.argKind = "HumanoidRootPart"
+end)
+MakeButton(KillTab, "Arg: Head", function()
+    ref.kill.argKind = "Head"
+end)
+MakeLabel(KillTab, "current: " .. ref.kill.argKind)
+
+local function BuildArg(target, kind)
+    if not target then return nil end
+    if kind == "Player" then return target end
+    if not target.Character then return nil end
+    if kind == "Character" then return target.Character end
+    if kind == "HumanoidRootPart" then return target.Character:FindFirstChild("HumanoidRootPart") end
+    if kind == "Head" then return target.Character:FindFirstChild("Head") end
+    return nil
+end
+
+MakeSection(KillTab, "Kill")
+MakeButton(KillTab, "⚡ KILL TARGET", function()
+    local r = ref.kill.remote
+    local t = ref.kill.target
+    if not r then
+        warn("[BTC] no kill remote selected — run scanner first")
+        return
+    end
+    if not t then
+        warn("[BTC] no kill target selected")
+        return
+    end
+    local arg = BuildArg(t, ref.kill.argKind)
+    if not arg then
+        warn("[BTC] arg build failed — target has no " .. ref.kill.argKind)
+        return
+    end
+    pcall(function() r:FireServer(arg) end)
+end)
+
+MakeToggle(KillTab, "Loop Kill", false, function(s)
+    ref.kill.loop = s
+    if s then
+        task.spawn(function()
+            while ref.kill.loop do
+                local r = ref.kill.remote
+                local t = ref.kill.target
+                if r and t then
+                    local arg = BuildArg(t, ref.kill.argKind)
+                    if arg then
+                        pcall(function() r:FireServer(arg) end)
+                    end
+                end
+                local base = 1 / (ref.kill.rate or 10)
+                local wait = ref.kill.jitter and (base * (0.7 + math.random() * 0.6)) or base
+                task.wait(wait)
+            end
+        end)
+    end
+end)
+
+MakeSlider(KillTab, "Kill Rate / sec", 1, 30, 10, function(v)
+    ref.kill.rate = v
+end)
+
+MakeToggle(KillTab, "Jitter Rate", true, function(s)
+    ref.kill.jitter = s
+end)
+
+MakeLabel(KillTab, "If target doesn't die: try different Arg shape")
+MakeLabel(KillTab, "or a different remote from the scanner")
+
+-- ============================================================
+-- COMBAT
+-- ============================================================
 
 MakeSection(CombatTab, "Aimbot (camera)")
 MakeToggle(CombatTab, "Aimbot Enabled", false, function(s) ref.flags.aimbot = s end)
@@ -656,9 +951,7 @@ local function ClosestToCursor()
         if p ~= LP and p.Character then
             local head = p.Character:FindFirstChild("Head")
             if head then
-                if ref.flags.aimTeam and SameTeam(p, LP) then
-                    -- skip
-                else
+                if not (ref.flags.aimTeam and SameTeam(p, LP)) then
                     local sp, on = cam:WorldToViewportPoint(head.Position)
                     if on then
                         local d = (Vector2.new(sp.X, sp.Y) - mp).Magnitude
@@ -685,111 +978,6 @@ track(RunService.Heartbeat:Connect(bind(function(r)
     end
 end)), 5)
 
-MakeSection(CombatTab, "Silent Aim")
-MakeToggle(CombatTab, "Enable Silent Aim", false, function(s) ref.silent.enabled = s end)
-MakeToggle(CombatTab, "Silent Team Check", false, function(s) ref.silent.teamCheck = s end)
-MakeToggle(CombatTab, "Velocity Prediction", true, function(s) ref.silent.predict = s end)
-MakeSlider(CombatTab, "Silent FOV", 10, 500, 200, function(v) ref.silent.fov = v end)
-
-local AIM_PATTERNS = { "fire", "shoot", "attack", "hit", "damage", "swing", "slash", "click", "spawn", "remote" }
-
-local function DiscoverAimRemotes()
-    local found = {}
-    local function scan(root)
-        for _, d in pairs(root:GetDescendants()) do
-            if d:IsA("RemoteEvent") then
-                local ln = string.lower(d.Name)
-                for _, p in pairs(AIM_PATTERNS) do
-                    if string.find(ln, p) then
-                        found[d] = true
-                        break
-                    end
-                end
-            end
-        end
-    end
-    pcall(scan, LP)
-    pcall(scan, Replicated)
-    pcall(scan, Workspace)
-    return found
-end
-
-ref.silent.remotes = DiscoverAimRemotes()
-
-local function PredictedHead(plr)
-    if not plr.Character then return nil end
-    local head = plr.Character:FindFirstChild("Head")
-    if not head then return nil end
-    if not ref.silent.predict then return head.Position end
-    local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return head.Position end
-    return head.Position + hrp.AssemblyLinearVelocity * 0.06
-end
-
-local function SilentTarget()
-    local cam = Workspace.CurrentCamera
-    local mp = UIS:GetMouseLocation()
-    local best, bd = nil, math.huge
-    for _, p in pairs(Players:GetPlayers()) do
-        if p ~= LP and p.Character then
-            if ref.silent.teamCheck and SameTeam(p, LP) then
-                -- skip
-            else
-                local head = p.Character:FindFirstChild("Head")
-                if head then
-                    local sp, on = cam:WorldToViewportPoint(head.Position)
-                    if on then
-                        local d = (Vector2.new(sp.X, sp.Y) - mp).Magnitude
-                        if d < bd and d <= ref.silent.fov then
-                            best, bd = p, d
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return best
-end
-
-track(RunService.Heartbeat:Connect(bind(function(r)
-    if not r.silent.enabled then r.silent.target = nil; return end
-    r.silent.target = SilentTarget()
-end)), 6)
-
-pcall(function()
-    local old
-    old = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        if ref.silent.enabled and ref.silent.remotes[self]
-           and (method == "FireServer" or method == "InvokeServer") then
-            local args = { ... }
-            local t = ref.silent.target
-            if t and t.Character then
-                local aim = PredictedHead(t)
-                if aim then
-                    for i, v in ipairs(args) do
-                        local ty = typeof(v)
-                        if ty == "CFrame" then
-                            args[i] = CFrame.new(v.Position, aim)
-                            break
-                        elseif ty == "Vector3" then
-                            args[i] = (aim - v).Unit
-                            break
-                        end
-                    end
-                end
-            end
-            return old(self, table.unpack(args))
-        end
-        return old(self, ...)
-    end)
-    ref.silent.old = old
-end)
-
-MakeButton(CombatTab, "Re-scan Aim Remotes", function()
-    ref.silent.remotes = DiscoverAimRemotes()
-end)
-
 MakeSection(CombatTab, "Hitbox")
 MakeSlider(CombatTab, "Hitbox Size", 1, 20, 1, function(v) ref.flags.hitboxSize = v end)
 MakeToggle(CombatTab, "Hitbox Expander", false, function(s) ref.flags.hitbox = s end)
@@ -808,6 +996,10 @@ track(RunService.Heartbeat:Connect(bind(function(r)
         end
     end
 end)), 7)
+
+-- ============================================================
+-- VISUAL
+-- ============================================================
 
 MakeSection(VisualTab, "ESP")
 MakeToggle(VisualTab, "Player ESP", false, function(s) ref.flags.esp = s end)
@@ -918,13 +1110,13 @@ MakeToggle(VisualTab, "Fullbright", false, function(s)
     end
 end)
 
-MakeToggle(VisualTab, "Remove Fog", false, function(s)
-    Lighting.FogEnd = s and 1e6 or 100000
-end)
-
 MakeSlider(VisualTab, "Camera FOV", 70, 120, 70, function(v)
     Workspace.CurrentCamera.FieldOfView = v
 end)
+
+-- ============================================================
+-- WORLD
+-- ============================================================
 
 MakeSection(WorldTab, "Physics")
 MakeSlider(WorldTab, "Gravity", 0, 500, 196, function(v) Workspace.Gravity = v end)
@@ -937,7 +1129,6 @@ MakeToggle(WorldTab, "Low Gravity", false, function(s)
     end
 end)
 
-MakeSection(WorldTab, "Environment")
 MakeToggle(WorldTab, "Freeze Time", false, function(s)
     ref.flags.freezeTime = s
     if s then ref.saved.clock = Lighting.ClockTime end
@@ -949,47 +1140,9 @@ track(RunService.Heartbeat:Connect(bind(function(r)
     end
 end)), 10)
 
-MakeToggle(WorldTab, "Remove Particles", false, function(s)
-    if s then
-        for _, d in pairs(Workspace:GetDescendants()) do
-            if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Smoke") or d:IsA("Fire") then
-                d.Enabled = false
-            end
-        end
-    end
-end)
-
-MakeSection(WorldTab, "Freecam")
-MakeToggle(WorldTab, "Freecam (WASD)", false, function(s)
-    ref.flags.freecam = s
-    if s then
-        local cam = Workspace.CurrentCamera
-        ref.saved.freecamPos = cam.CFrame.Position
-        local speed = 80
-        track(RunService.Heartbeat:Connect(bind(function(r)
-            if not r.flags.freecam then return end
-            local cam = Workspace.CurrentCamera
-            local look = cam.CFrame.LookVector
-            local right = cam.CFrame.RightVector
-            local m = Vector3.zero
-            if UIS:IsKeyDown(Enum.KeyCode.W) then m = m + look end
-            if UIS:IsKeyDown(Enum.KeyCode.S) then m = m - look end
-            if UIS:IsKeyDown(Enum.KeyCode.A) then m = m - right end
-            if UIS:IsKeyDown(Enum.KeyCode.D) then m = m + right end
-            if UIS:IsKeyDown(Enum.KeyCode.Space) then m = m + Vector3.new(0, 1, 0) end
-            if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then m = m - Vector3.new(0, 1, 0) end
-            if m.Magnitude > 0 then
-                r.saved.freecamPos = r.saved.freecamPos + m.Unit * speed * (1 / 60)
-            end
-            cam.CFrame = CFrame.new(r.saved.freecamPos, r.saved.freecamPos + cam.CFrame.LookVector)
-        end)), 11)
-        UIS.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
-    else
-        if LP.Character then
-            Workspace.CurrentCamera.CameraSubject = LP.Character:FindFirstChildOfClass("Humanoid")
-        end
-    end
-end)
+-- ============================================================
+-- SERVER
+-- ============================================================
 
 MakeSection(ServerTab, "Info")
 local InfoLabel = MakeLabel(ServerTab, "Players: " .. #Players:GetPlayers())
@@ -1001,7 +1154,6 @@ MakeButton(ServerTab, "Refresh Player List", function()
     InfoLabel.Text = "Players (" .. #list .. "): " .. table.concat(list, ", ")
 end)
 
-MakeSection(ServerTab, "Server Hop")
 MakeButton(ServerTab, "Server Hop", function()
     local ok, servers = pcall(function()
         return HttpSvc:JSONDecode(game:HttpGet(
@@ -1018,7 +1170,6 @@ MakeButton(ServerTab, "Server Hop", function()
     end
 end)
 
-MakeSection(ServerTab, "Anti-AFK")
 MakeToggle(ServerTab, "Anti-AFK", false, function(s)
     ref.flags.antiAfk = s
     if s then
@@ -1029,6 +1180,13 @@ MakeToggle(ServerTab, "Anti-AFK", false, function(s)
     end
 end)
 
+-- ============================================================
+-- MISC
+-- ============================================================
+
+MakeSection(MiscTab, "Community")
+MakeDiscordCard(MiscTab)
+
 MakeSection(MiscTab, "Client")
 MakeButton(MiscTab, "Copy JobId", function()
     if setclipboard then setclipboard(game.JobId) end
@@ -1037,74 +1195,11 @@ MakeButton(MiscTab, "Copy PlaceId", function()
     if setclipboard then setclipboard(tostring(game.PlaceId)) end
 end)
 
-MakeToggle(MiscTab, "Infinite Yield", false, function(s)
-    if s and loadstring then
-        pcall(function()
-            loadstring(game:HttpGet(
-                "https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"
-            ))()
-        end)
-    end
-end)
-
-MakeToggle(MiscTab, "Dex Explorer", false, function(s)
-    if s and loadstring then
-        pcall(function()
-            loadstring(game:HttpGet(
-                "https://raw.githubusercontent.com/peyton2465/Dex/master/out.lua"
-            ))()
-        end)
-    end
-end)
-
-MakeSection(MiscTab, "Detection Cleaner")
-MakeToggle(MiscTab, "Hide Globals", true, function(s) ref.clean.hide = s end)
-
-local function RunCleaner()
-    if ref.clean.hide then
-        local salt = tostring(math.random(1e8, 1e9 - 1))
-        shared[unhex("5f") .. salt] = ref.v
-        if rawget(_G, "BTC") then rawset(_G, "BTC", nil) end
-        if rawget(_G, "SilentAim") then rawset(_G, "SilentAim", nil) end
-    end
-end
-
-MakeButton(MiscTab, "Run Cleaner", RunCleaner)
-RunCleaner()
-
-task.spawn(function()
-    while task.wait(30) do
-        if ref.clean.hide then pcall(RunCleaner) end
-    end
-end)
-
-MakeSection(MiscTab, "Community")
-MakeButton(MiscTab, "Join Discord", function()
-    if setclipboard then setclipboard(ref.discord) end
-    pcall(function()
-        GuiService:OpenBrowserWindow(ref.discord)
-    end)
-    local note = Instance.new("TextLabel")
-    note.Size = UDim2.new(0, 220, 0, 30)
-    note.Position = UDim2.new(0.5, -110, 0, 12)
-    note.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
-    note.BackgroundTransparency = 0.1
-    note.Text = "discord link copied"
-    note.TextColor3 = Color3.fromRGB(120, 200, 255)
-    note.Font = Enum.Font.GothamBold
-    note.TextSize = 12
-    note.Parent = GUI
-    Instance.new("UICorner", note).CornerRadius = UDim.new(0, 6)
-    task.delay(2, function()
-        Tween:Create(note, TweenInfo.new(0.5), { BackgroundTransparency = 1, TextTransparency = 1 }):Play()
-        task.wait(0.6)
-        note:Destroy()
-    end)
-end)
-
-MakeSection(MiscTab, "Panel")
-MakeLabel(MiscTab, "BTC v" .. S.version)
 MakeButton(MiscTab, "Destroy Panel", function() GUI:Destroy() end)
+
+-- ============================================================
+-- BACKGROUND LOOPS
+-- ============================================================
 
 track(RunService.Heartbeat:Connect(bind(function(r)
     if r.flags.noclip and LP.Character then
@@ -1135,14 +1230,14 @@ LP.CharacterAdded:Connect(function(char)
 end)
 
 local notif = Instance.new("TextLabel")
-notif.Size = UDim2.new(0, 220, 0, 30)
-notif.Position = UDim2.new(0.5, -110, 0, 12)
+notif.Size = UDim2.new(0, 240, 0, 34)
+notif.Position = UDim2.new(0.5, -120, 0, 12)
 notif.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
 notif.BackgroundTransparency = 0.1
-notif.Text = "BTC v" .. S.version .. " loaded"
+notif.Text = "BTC v" .. S.version .. " loaded" .. (IS_MOBILE and " (mobile)" or "")
 notif.TextColor3 = Color3.fromRGB(120, 200, 255)
 notif.Font = Enum.Font.GothamBold
-notif.TextSize = 12
+notif.TextSize = 13
 notif.Parent = GUI
 Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 6)
 task.delay(3, function()
