@@ -1,5 +1,5 @@
 -- language: Lua, target: Roblox (Delta / Solara / Script-Ware / Wave) — PC + mobile
--- BTC Admin Panel v1.8 — kill module, remote scanner, mobile-tuned, Discord card
+-- BTC Admin Panel v1.9 — full kill module, remote spy, brute force, knockback, fling
 -- GitHub-loadable: loadstring(game:HttpGet("..."))()
 -- discord: https://discord.gg/57mYmMwRuH
 
@@ -12,13 +12,14 @@ end
 local N = {
     PANEL   = unhex("4254435f50616e656c"),
     ESP_TAG = unhex("4254435f4553505f546167"),
-    HL      = unhex("4254435f484c"),
+    HL      = unhex("4254435f486967686c69676874"),
     FLY_BV  = unhex("4254435f466c79"),
     FLY_GY  = unhex("4254435f466c794779726f"),
+    SPY_LOG = unhex("4254435f5370794c6f67"),
 }
 
 local S = {
-    version = unhex("312e38"),
+    version = unhex("312e39"),
     flags   = {},
     conns   = {},
     tabs    = {},
@@ -28,12 +29,19 @@ local S = {
     },
     kill    = {
         remote      = nil,
-        argKind     = "Player",   -- Player | Character | HumanoidRootPart | Head
+        argKind     = "Player",
         loop        = false,
         rate        = 10,
         jitter      = true,
         target      = nil,
         candidates  = {},
+        spyOn       = false,
+        spyLog      = {},
+        spyOld      = nil,
+        bruteOn     = false,
+        flingOn     = false,
+        knockOn     = false,
+        knockPower  = 300,
     },
     clean   = { hide = true },
     saved   = {},
@@ -70,13 +78,10 @@ local GuiService = game:GetService("GuiService")
 local LP    = Players.LocalPlayer
 local Mouse = LP:GetMouse()
 
--- mobile detection
 local IS_MOBILE = UIS.TouchEnabled and not UIS.KeyboardEnabled
 
--- mobile-tuned sizing
-local SCALE   = IS_MOBILE and 0.85 or 1
 local PANEL_W = math.floor(560 * (IS_MOBILE and 1.05 or 1))
-local PANEL_H = math.floor(380 * (IS_MOBILE and 1.15 or 1))
+local PANEL_H = math.floor(400 * (IS_MOBILE and 1.15 or 1))
 local BTN_H   = IS_MOBILE and 34 or 28
 local TXT_S   = IS_MOBILE and 13 or 12
 local SEC_S   = IS_MOBILE and 12 or 11
@@ -107,40 +112,30 @@ Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 8)
 local mstroke = Instance.new("UIStroke", Main)
 mstroke.Color = Color3.fromRGB(60, 60, 70); mstroke.Thickness = 1
 
--- custom drag (works on mobile + PC)
 do
     local dragging, dragStart, startPos = false, nil, nil
-    local function beginDrag(input)
-        dragging = true
-        dragStart = input.Position
-        startPos = Main.Position
-    end
-    local function moveDrag(input)
-        if not dragging then return end
-        local delta = input.Position - dragStart
-        Main.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y
-        )
-    end
-    local function endDrag() dragging = false end
-
     Main.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
            or input.UserInputType == Enum.UserInputType.Touch then
-            beginDrag(input)
+            dragging = true
+            dragStart = input.Position
+            startPos = Main.Position
         end
     end)
     UIS.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement
-           or input.UserInputType == Enum.UserInputType.Touch then
-            moveDrag(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+           or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            Main.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
         end
     end)
     UIS.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
            or input.UserInputType == Enum.UserInputType.Touch then
-            endDrag()
+            dragging = false
         end
     end)
 end
@@ -278,6 +273,7 @@ local function MakeLabel(parent, text)
     L.Font = Enum.Font.GothamMedium
     L.TextSize = SEC_S
     L.TextXAlignment = Enum.TextXAlignment.Left
+    L.TextWrapped = true
     L.Parent = parent
     return L
 end
@@ -312,6 +308,32 @@ local function MakeButton(parent, text, cb)
     end)
     B.MouseLeave:Connect(function()
         Tween:Create(B, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(30, 30, 40) }):Play()
+    end)
+
+    B.MouseButton1Click:Connect(function()
+        local ok, err = pcall(cb)
+        if not ok then warn("[BTC] button error: " .. tostring(err)) end
+    end)
+    return B
+end
+
+local function MakeDangerButton(parent, text, cb)
+    local B = Instance.new("TextButton")
+    B.Size = UDim2.new(1, 0, 0, BTN_H + 4)
+    B.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+    B.Text = text
+    B.TextColor3 = Color3.fromRGB(255, 255, 255)
+    B.Font = Enum.Font.GothamBold
+    B.TextSize = TXT_S + 1
+    B.BorderSizePixel = 0
+    B.Parent = parent
+    Instance.new("UICorner", B).CornerRadius = UDim.new(0, 6)
+
+    B.MouseEnter:Connect(function()
+        Tween:Create(B, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(220, 60, 60) }):Play()
+    end)
+    B.MouseLeave:Connect(function()
+        Tween:Create(B, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(180, 40, 40) }):Play()
     end)
 
     B.MouseButton1Click:Connect(function()
@@ -537,7 +559,6 @@ local function MakePlayerPicker(parent, labelText, onPick)
     return Picker
 end
 
--- Discord card — prominent, attractive
 local function MakeDiscordCard(parent)
     local Card = Instance.new("Frame")
     Card.Size = UDim2.new(1, 0, 0, 76)
@@ -551,7 +572,6 @@ local function MakeDiscordCard(parent)
     glow.Thickness = 1.5
     glow.Transparency = 0.2
 
-    -- slow pulse
     task.spawn(function()
         while Card.Parent do
             Tween:Create(glow, TweenInfo.new(1.2, Enum.EasingStyle.Sine), { Transparency = 0.6 }):Play()
@@ -614,20 +634,12 @@ local function MakeDiscordCard(parent)
 
     Join.MouseButton1Click:Connect(function()
         if setclipboard then setclipboard(ref.discord) end
-        pcall(function()
-            GuiService:OpenBrowserWindow(ref.discord)
-        end)
+        pcall(function() GuiService:OpenBrowserWindow(ref.discord) end)
         Join.Text = "COPIED"
         task.delay(1.5, function()
             if Join.Parent then Join.Text = "JOIN" end
         end)
     end)
-
-    local copy = Instance.new("TextButton")
-    copy.Size = UDim2.new(0, 0, 0, 0)
-    copy.BackgroundTransparency = 1
-    copy.Text = ""
-    copy.Parent = Card
 
     return Card
 end
@@ -646,11 +658,9 @@ local MiscTab     = MakeTab("Misc")
 -- ============================================================
 
 MakeSection(PlayerTab, "Character")
-
 MakeButton(PlayerTab, "Reset Character", function()
     if LP.Character then LP.Character:BreakJoints() end
 end)
-
 MakeButton(PlayerTab, "Rejoin Server", function()
     Teleport:Teleport(game.PlaceId, LP)
 end)
@@ -713,15 +723,13 @@ MakeToggle(PlayerTab, "Fly", false, function(s)
             if not b or not g then return end
             local cam = Workspace.CurrentCamera
             local m = Vector3.zero
-            -- keyboard
             if UIS:IsKeyDown(Enum.KeyCode.W) then m = m + cam.CFrame.LookVector end
             if UIS:IsKeyDown(Enum.KeyCode.S) then m = m - cam.CFrame.LookVector end
             if UIS:IsKeyDown(Enum.KeyCode.A) then m = m - cam.CFrame.RightVector end
             if UIS:IsKeyDown(Enum.KeyCode.D) then m = m + cam.CFrame.RightVector end
             if UIS:IsKeyDown(Enum.KeyCode.Space) then m = m + Vector3.new(0, 1, 0) end
             if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then m = m - Vector3.new(0, 1, 0) end
-            -- mobile: on-screen joystick is not accessible; use camera look + touch joystick via Humanoid
-            if IS_MOBILE and r.flags.fly then
+            if IS_MOBILE then
                 local hum2 = char:FindFirstChildOfClass("Humanoid")
                 if hum2 then
                     local dir = hum2.MoveDirection
@@ -744,14 +752,12 @@ end)
 
 MakeSection(PlayerTab, "Target")
 MakePlayerPicker(PlayerTab, "Target", function(p) ref.flags.target = p end)
-
 MakeButton(PlayerTab, "Spectate", function()
     local t = ref.flags.target
     if t and t.Character then
         Workspace.CurrentCamera.CameraSubject = t.Character:FindFirstChildOfClass("Humanoid")
     end
 end)
-
 MakeButton(PlayerTab, "Goto Target", function()
     local t = ref.flags.target
     if t and t.Character and LP.Character then
@@ -774,22 +780,8 @@ MakeButton(TeleportTab, "Teleport To Selected", function()
     end
 end)
 
-MakeSection(TeleportTab, "Waypoints")
-MakeButton(TeleportTab, "Save Slot 1", function()
-    if LP.Character then ref.flags.wp1 = LP.Character.HumanoidRootPart.CFrame end
-end)
-MakeButton(TeleportTab, "Load Slot 1", function()
-    if ref.flags.wp1 and LP.Character then LP.Character.HumanoidRootPart.CFrame = ref.flags.wp1 end
-end)
-MakeButton(TeleportTab, "Save Slot 2", function()
-    if LP.Character then ref.flags.wp2 = LP.Character.HumanoidRootPart.CFrame end
-end)
-MakeButton(TeleportTab, "Load Slot 2", function()
-    if ref.flags.wp2 and LP.Character then LP.Character.HumanoidRootPart.CFrame = ref.flags.wp2 end
-end)
-
 -- ============================================================
--- KILL TAB
+-- KILL TAB — everything
 -- ============================================================
 
 MakeSection(KillTab, "Target")
@@ -797,14 +789,14 @@ MakePlayerPicker(KillTab, "Kill target", function(p)
     ref.kill.target = p
 end)
 
-MakeSection(KillTab, "Kill Remote Scanner")
+MakeSection(KillTab, "1 — Scan")
 MakeButton(KillTab, "Scan For Kill Remotes", function()
     local found = {}
-    local patterns = { "kill", "damage", "hit", "attack", "take", "hurt", "die", "slay", "elim" }
+    local patterns = { "kill", "damage", "hit", "attack", "take", "hurt", "die", "slay", "elim", "health", "weapon", "swing", "shot", "fire" }
     local function scan(root)
         if not root then return end
         for _, d in pairs(root:GetDescendants()) do
-            if d:IsA("RemoteEvent") then
+            if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then
                 local ln = string.lower(d.Name)
                 for _, p in pairs(patterns) do
                     if string.find(ln, p, 1, true) then
@@ -820,24 +812,20 @@ MakeButton(KillTab, "Scan For Kill Remotes", function()
     pcall(scan, LP)
     if LP.Character then pcall(scan, LP.Character) end
     ref.kill.candidates = found
-    warn("[BTC] kill remotes found: " .. #found)
+    warn("[BTC] candidate remotes: " .. #found)
     for i, r in ipairs(found) do
-        warn("  [" .. i .. "] " .. r:GetFullName())
+        warn("  [" .. i .. "] " .. r:GetFullName() .. " (" .. r.ClassName .. ")")
     end
 end)
 
-MakeLabel(KillTab, "Use the button above, then check console")
-
-MakeSection(KillTab, "Selected Remote")
+MakeSection(KillTab, "2 — Select")
 local RemoteLabel = MakeLabel(KillTab, "remote: none")
-
 MakeButton(KillTab, "Use First Found", function()
     if ref.kill.candidates[1] then
         ref.kill.remote = ref.kill.candidates[1]
         RemoteLabel.Text = "remote: " .. ref.kill.remote.Name
     end
 end)
-
 MakeButton(KillTab, "Cycle Remote", function()
     if #ref.kill.candidates == 0 then return end
     local cur = ref.kill.remote
@@ -850,49 +838,110 @@ MakeButton(KillTab, "Cycle Remote", function()
     RemoteLabel.Text = "remote: " .. ref.kill.remote.Name
 end)
 
-MakeSection(KillTab, "Argument Shape")
+MakeSection(KillTab, "3 — Argument Shape")
+local ArgLabel = MakeLabel(KillTab, "arg: Player")
 MakeButton(KillTab, "Arg: Player", function()
-    ref.kill.argKind = "Player"
+    ref.kill.argKind = "Player"; ArgLabel.Text = "arg: Player"
 end)
 MakeButton(KillTab, "Arg: Character", function()
-    ref.kill.argKind = "Character"
+    ref.kill.argKind = "Character"; ArgLabel.Text = "arg: Character"
 end)
 MakeButton(KillTab, "Arg: HumanoidRootPart", function()
-    ref.kill.argKind = "HumanoidRootPart"
+    ref.kill.argKind = "HumanoidRootPart"; ArgLabel.Text = "arg: HumanoidRootPart"
 end)
 MakeButton(KillTab, "Arg: Head", function()
-    ref.kill.argKind = "Head"
+    ref.kill.argKind = "Head"; ArgLabel.Text = "arg: Head"
 end)
-MakeLabel(KillTab, "current: " .. ref.kill.argKind)
+MakeButton(KillTab, "Arg: HRP + Damage", function()
+    ref.kill.argKind = "HRP_Damage"; ArgLabel.Text = "arg: HRP + 9999"
+end)
+MakeButton(KillTab, "Arg: Player + Damage", function()
+    ref.kill.argKind = "Player_Damage"; ArgLabel.Text = "arg: Player + 9999"
+end)
+MakeButton(KillTab, "Arg: Table {target}", function()
+    ref.kill.argKind = "Table"; ArgLabel.Text = "arg: table {target=player}"
+end)
+MakeButton(KillTab, "Arg: Tool + Player", function()
+    ref.kill.argKind = "Tool_Player"; ArgLabel.Text = "arg: tool, player"
+end)
+MakeButton(KillTab, "Arg: LookVector", function()
+    ref.kill.argKind = "LookVector"; ArgLabel.Text = "arg: lookVector"
+end)
 
 local function BuildArg(target, kind)
     if not target then return nil end
     if kind == "Player" then return target end
     if not target.Character then return nil end
-    if kind == "Character" then return target.Character end
-    if kind == "HumanoidRootPart" then return target.Character:FindFirstChild("HumanoidRootPart") end
-    if kind == "Head" then return target.Character:FindFirstChild("Head") end
+    local char = target.Character
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local head = char:FindFirstChild("Head")
+    if kind == "Character" then return char end
+    if kind == "HumanoidRootPart" then return hrp end
+    if kind == "Head" then return head end
+    if kind == "HRP_Damage" then return hrp, 9999 end
+    if kind == "Player_Damage" then return target, 9999 end
+    if kind == "Table" then return { target = target, victim = target, player = target, plr = target } end
+    if kind == "Tool_Player" then
+        local tool = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
+        return tool, target
+    end
+    if kind == "LookVector" then
+        if hrp then
+            return (hrp.Position - Workspace.CurrentCamera.CFrame.Position).Unit
+        end
+    end
     return nil
 end
 
-MakeSection(KillTab, "Kill")
-MakeButton(KillTab, "⚡ KILL TARGET", function()
-    local r = ref.kill.remote
+local function FireKill(remote, target, kind)
+    if not remote or not target then return false end
+    local a, b = BuildArg(target, kind)
+    if a == nil then return false end
+    local ok = pcall(function()
+        if b ~= nil then
+            if remote:IsA("RemoteFunction") then
+                remote:InvokeServer(a, b)
+            else
+                remote:FireServer(a, b)
+            end
+        else
+            if remote:IsA("RemoteFunction") then
+                remote:InvokeServer(a)
+            else
+                remote:FireServer(a)
+            end
+        end
+    end)
+    return ok
+end
+
+MakeSection(KillTab, "4 — Fire")
+MakeDangerButton(KillTab, "⚡ KILL TARGET (one shot)", function()
+    if not ref.kill.remote then
+        warn("[BTC] no remote selected")
+        return
+    end
+    if not ref.kill.target then
+        warn("[BTC] no target selected")
+        return
+    end
+    local ok = FireKill(ref.kill.remote, ref.kill.target, ref.kill.argKind)
+    warn("[BTC] kill fired: " .. tostring(ok))
+end)
+
+MakeDangerButton(KillTab, "🔥 BRUTE FORCE — fire ALL remotes at target", function()
+    if not ref.kill.target then
+        warn("[BTC] no target selected")
+        return
+    end
     local t = ref.kill.target
-    if not r then
-        warn("[BTC] no kill remote selected — run scanner first")
-        return
+    local n = 0
+    for _, r in ipairs(ref.kill.candidates) do
+        for _, kind in ipairs({ "Player", "Character", "HumanoidRootPart", "Head", "HRP_Damage", "Player_Damage", "Table", "Tool_Player" }) do
+            if FireKill(r, t, kind) then n = n + 1 end
+        end
     end
-    if not t then
-        warn("[BTC] no kill target selected")
-        return
-    end
-    local arg = BuildArg(t, ref.kill.argKind)
-    if not arg then
-        warn("[BTC] arg build failed — target has no " .. ref.kill.argKind)
-        return
-    end
-    pcall(function() r:FireServer(arg) end)
+    warn("[BTC] brute force fired " .. n .. " calls")
 end)
 
 MakeToggle(KillTab, "Loop Kill", false, function(s)
@@ -900,17 +949,31 @@ MakeToggle(KillTab, "Loop Kill", false, function(s)
     if s then
         task.spawn(function()
             while ref.kill.loop do
-                local r = ref.kill.remote
-                local t = ref.kill.target
-                if r and t then
-                    local arg = BuildArg(t, ref.kill.argKind)
-                    if arg then
-                        pcall(function() r:FireServer(arg) end)
-                    end
+                if ref.kill.remote and ref.kill.target then
+                    FireKill(ref.kill.remote, ref.kill.target, ref.kill.argKind)
                 end
                 local base = 1 / (ref.kill.rate or 10)
                 local wait = ref.kill.jitter and (base * (0.7 + math.random() * 0.6)) or base
                 task.wait(wait)
+            end
+        end)
+    end
+end)
+
+MakeToggle(KillTab, "Brute Force Loop", false, function(s)
+    ref.kill.bruteOn = s
+    if s then
+        task.spawn(function()
+            while ref.kill.bruteOn do
+                if ref.kill.target then
+                    local t = ref.kill.target
+                    for _, r in ipairs(ref.kill.candidates) do
+                        for _, kind in ipairs({ "Player", "Character", "HumanoidRootPart", "Head", "HRP_Damage", "Player_Damage", "Table" }) do
+                            FireKill(r, t, kind)
+                        end
+                    end
+                end
+                task.wait(1 / (ref.kill.rate or 10))
             end
         end)
     end
@@ -924,8 +987,124 @@ MakeToggle(KillTab, "Jitter Rate", true, function(s)
     ref.kill.jitter = s
 end)
 
-MakeLabel(KillTab, "If target doesn't die: try different Arg shape")
-MakeLabel(KillTab, "or a different remote from the scanner")
+-- ============================================================
+-- KILL TAB — knockback, fling, self-kill
+-- ============================================================
+
+MakeSection(KillTab, "Knockback Kill (push into hazards)")
+MakeSlider(KillTab, "Knock Power", 50, 2000, 300, function(v)
+    ref.kill.knockPower = v
+end)
+
+MakeToggle(KillTab, "Knock Target", false, function(s)
+    ref.kill.knockOn = s
+    if s then
+        track(RunService.Heartbeat:Connect(bind(function(r)
+            if not r.kill.knockOn then return end
+            local t = r.kill.target
+            local me = LP.Character
+            if not t or not t.Character or not me then return end
+            local myHrp = me:FindFirstChild("HumanoidRootPart")
+            local theirHrp = t.Character:FindFirstChild("HumanoidRootPart")
+            if not myHrp or not theirHrp then return end
+            local dir = (theirHrp.Position - myHrp.Position)
+            if dir.Magnitude > 15 then return end
+            local push = dir.Unit * (r.kill.knockPower or 300)
+            local bv = theirHrp:FindFirstChild("BTC_K"
+)
+            if not bv then
+                bv = Instance.new("BodyVelocity")
+                bv.Name = "BTC_K"
+                bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+                bv.Parent = theirHrp
+            end
+            bv.Velocity = Vector3.new(push.X, r.kill.knockPower or 300, push.Z)
+            task.delay(0.1, function()
+                if bv and bv.Parent then bv:Destroy() end
+            end)
+        end)), 30)
+    end
+end)
+
+MakeSection(KillTab, "Fling Kill (ragdoll physics)")
+MakeToggle(KillTab, "Fling Target", false, function(s)
+    ref.kill.flingOn = s
+    if s then
+        track(RunService.Heartbeat:Connect(bind(function(r)
+            if not r.kill.flingOn then return end
+            local t = r.kill.target
+            local me = LP.Character
+            if not t or not t.Character or not me then return end
+            local myHrp = me:FindFirstChild("HumanoidRootPart")
+            local theirHrp = t.Character:FindFirstChild("HumanoidRootPart")
+            if not myHrp or not theirHrp then return end
+            local dist = (theirHrp.Position - myHrp.Position).Magnitude
+            if dist > 10 then return end
+            for _, v in pairs(t.Character:GetDescendants()) do
+                if v:IsA("BasePart") and v.Name ~= "HumanoidRootPart" then
+                    local spin = Instance.new("BodyAngularVelocity")
+                    spin.Name = "BTC_F"
+                    spin.AngularVelocity = Vector3.new(1e5, 1e5, 1e5)
+                    spin.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+                    spin.Parent = v
+                    task.delay(0.15, function()
+                        if spin and spin.Parent then spin:Destroy() end
+                    end)
+                end
+            end
+        end)), 31)
+    end
+end)
+
+MakeSection(KillTab, "Self")
+MakeButton(KillTab, "Kill Self", function()
+    if LP.Character then
+        local h = LP.Character:FindFirstChildOfClass("Humanoid")
+        if h then h.Health = 0 end
+    end
+end)
+
+MakeSection(KillTab, "Remote Spy")
+MakeToggle(KillTab, "Spy On (logs remotes the game fires)", false, function(s)
+    ref.kill.spyOn = s
+    if s and not ref.kill.spyOld then
+        local old
+        old = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if ref.kill.spyOn and (method == "FireServer" or method == "InvokeServer") then
+                local args = { ... }
+                local info = "[SPY] " .. self:GetFullName() .. ":" .. method .. "("
+                for i, a in ipairs(args) do
+                    info = info .. tostring(a) .. (i < #args and ", " or "")
+                end
+                info = info .. ")"
+                warn(info)
+                ref.kill.spyLog[#ref.kill.spyLog+1] = info
+            end
+            return old(self, ...)
+        end)
+        ref.kill.spyOld = old
+    end
+end)
+
+MakeButton(KillTab, "Dump Spy Log", function()
+    warn("[BTC] spy log: " .. #ref.kill.spyLog .. " entries")
+    for i, e in ipairs(ref.kill.spyLog) do
+        warn("  [" .. i .. "] " .. e)
+    end
+end)
+
+MakeButton(KillTab, "Clear Spy Log", function()
+    ref.kill.spyLog = {}
+end)
+
+MakeSection(KillTab, "If nothing kills")
+MakeLabel(KillTab, "1. Select a target")
+MakeLabel(KillTab, "2. Run the scanner")
+MakeLabel(KillTab, "3. Brute-force ALL remotes")
+MakeLabel(KillTab, "4. If still nothing — game is server-authoritative")
+MakeLabel(KillTab, "5. Use Combat tab aimbot + hitbox instead")
+MakeLabel(KillTab, "6. Or knock/fling into hazards")
 
 -- ============================================================
 -- COMBAT
@@ -1120,25 +1299,6 @@ end)
 
 MakeSection(WorldTab, "Physics")
 MakeSlider(WorldTab, "Gravity", 0, 500, 196, function(v) Workspace.Gravity = v end)
-MakeToggle(WorldTab, "Low Gravity", false, function(s)
-    if s then
-        ref.saved.gravity = Workspace.Gravity
-        Workspace.Gravity = 50
-    else
-        Workspace.Gravity = ref.saved.gravity or 196
-    end
-end)
-
-MakeToggle(WorldTab, "Freeze Time", false, function(s)
-    ref.flags.freezeTime = s
-    if s then ref.saved.clock = Lighting.ClockTime end
-end)
-
-track(RunService.Heartbeat:Connect(bind(function(r)
-    if r.flags.freezeTime then
-        Lighting.ClockTime = r.saved.clock or 14
-    end
-end)), 10)
 
 -- ============================================================
 -- SERVER
@@ -1146,7 +1306,6 @@ end)), 10)
 
 MakeSection(ServerTab, "Info")
 local InfoLabel = MakeLabel(ServerTab, "Players: " .. #Players:GetPlayers())
-MakeLabel(ServerTab, "PlaceId: " .. tostring(game.PlaceId))
 
 MakeButton(ServerTab, "Refresh Player List", function()
     local list = {}
@@ -1194,7 +1353,6 @@ end)
 MakeButton(MiscTab, "Copy PlaceId", function()
     if setclipboard then setclipboard(tostring(game.PlaceId)) end
 end)
-
 MakeButton(MiscTab, "Destroy Panel", function() GUI:Destroy() end)
 
 -- ============================================================
@@ -1230,8 +1388,8 @@ LP.CharacterAdded:Connect(function(char)
 end)
 
 local notif = Instance.new("TextLabel")
-notif.Size = UDim2.new(0, 240, 0, 34)
-notif.Position = UDim2.new(0.5, -120, 0, 12)
+notif.Size = UDim2.new(0, 260, 0, 34)
+notif.Position = UDim2.new(0.5, -130, 0, 12)
 notif.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
 notif.BackgroundTransparency = 0.1
 notif.Text = "BTC v" .. S.version .. " loaded" .. (IS_MOBILE and " (mobile)" or "")
